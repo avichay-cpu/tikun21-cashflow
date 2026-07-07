@@ -1,34 +1,7 @@
-# פריסה ל-Render — מדריך פשוט
-
-המטרה: להעלות את הכלי לכתובת אינטרנט פרטית שאתה והצוות פותחים בדפדפן,
-גוררים קובץ תחשיב, קובעים הנחות, ומקבלים אחוז מימון + קובץ תזרים.
-
-## מה יש בחבילה
-
-- `app.py` — האפליקציה (המסך + הלוגיקה)
-- `generate_cashflow.py`, `write_cashflow_formulas.py`, `engine/` — מנוע החישוב
-- `requirements.txt`, `render.yaml`, `Procfile` — הגדרות פריסה
-
-## שלבים (חד-פעמי, כ-10 דקות)
-
-1. **חשבון GitHub** — היכנס ל-github.com, פתח חשבון (חינם).
-2. **צור מאגר (Repository)** חדש, לחץ "Add file" → "Upload files", וגרור לתוכו
-   את *כל* הקבצים והתיקייה `engine` מהחבילה. לחץ "Commit".
-3. **חשבון Render** — היכנס ל-render.com, התחבר עם GitHub (חינם).
-4. ב-Render לחץ **New → Blueprint**, בחר את המאגר שיצרת. Render יזהה את
-   `render.yaml` אוטומטית ויבנה את השירות. לחץ **Apply**.
-5. אחרי דקה-שתיים תקבל כתובת בסגנון `https://tikun21-cashflow.onrender.com`.
-   זו הכתובת לצוות.
-
-> חלופה בלי GitHub: ב-Render אפשר גם "New → Web Service" ולחבר מאגר, אך
-> GitHub הוא הדרך הפשוטה ביותר.
-
-## הערות
-
-- ה-plan החינמי של Render "נרדם" אחרי חוסר פעילות; הבקשה הראשונה אחרי הפסקה
-  עשויה לקחת ~30 שניות. לשימוש שוטף שקול plan בתשלום נמוך.
-- הכלי אינו שומר קבצים — כל הרצה מעובדת וזמנית בלבד.
-
-## עדכון הכלי בעתיד
-
-מעלים את הקובץ המעודכן ל-GitHub (Commit), ו-Render יפרוס מחדש אוטומטית.
+services:
+  - type: web
+    name: tikun21-cashflow
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT

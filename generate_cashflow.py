@@ -1,203 +1,240 @@
 """
-ממשק ווב — מחולל תזרים התחדשות עירונית (תקן 21)
-גוררים קובץ תחשיב + קובעים הנחות עבודה → אחוז מימון + קובץ תזרים (נוסחאות).
+מחולל תזרים הכנסות והוצאות מקובץ תחשיב (התחדשות עירונית)
+=========================================================
+קורא את גיליון "מאוחד" מקובץ תחשיב, פורס את העלויות וההכנסות על ציר הזמן
+לפי שיטת האקסל של הלשכה, מריץ את סימולציית המימון, ומחשב את אחוז המימון.
 
-הרצה מקומית:
-    pip install -r requirements.txt
-    uvicorn app:app --reload
-    http://127.0.0.1:8000
+מיפוי הנתונים מבוסס על מבנה תבנית ה-"מאוחד" של הלשכה (שורות קבועות).
 """
-import os, sys, tempfile, traceback
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sys, os
+sys.path.insert(0, os.path.dirname(__file__))
+try:
+    from engine.financing import simulate_financing, FinancingCostBreakdown
+except ModuleNotFoundError:
+    from financing import simulate_financing, FinancingCostBreakdown
 
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+# ---------- הנחות עבודה (ניתן לעריכה לכל פרויקט) ----------
+CFG = dict(
+    months=42,                 # חודשי בנייה/תזרים — המניע המרכזי
+    annual_rate=0.055,
+    equity_pct=0.25,
+    down_payment=0.20,         # תקבול ראשון בחתימה
+    promo=1,                   # תקופת מבצע (חודשי חתימה מוקדמים)
+    track20_share=0.20,        # חלק מסלול ה-20% מהפדיון (H4)
+    planning_permit_share=0.50,
+    # חלונות ביצוע (חודש התחלה, משך) — נגזרים ממבנה הפרויקט
+    basement=(2, 9),           # 3 חודשים × 3 קומות מרתף
+    skeleton=(10, 12),
+    finishing=(20, 23),
+    # שיעורי ערבויות ועמלות
+    fee_accompaniment=0.005,
+    fee_sale_law=0.008,
+    fee_rent=0.035,
+    fee_owners=0.007,
+    fee_non_util=0.004,
+)
 
-import generate_cashflow as G
-import write_cashflow_formulas as W
-
-app = FastAPI(title="מחולל תזרים — התחדשות עירונית")
-
-DEFAULTS = dict(months=42, rate=5.5, equity=25, down=20, promo=1, track20=20,
-                permit_share=50, fee_acc=0.5, fee_sale=0.8, fee_rent=3.5,
-                fee_own=0.7, fee_nu=0.4, bs=2, bd=9, ss=10, sd=12, fs=20, fd=23)
-
-
-def _canonical(form):
-    pct = {"rate", "equity", "down", "track20", "permit_share",
-           "fee_acc", "fee_sale", "fee_rent", "fee_own", "fee_nu"}
-    ov = {}
-    for k, dv in DEFAULTS.items():
-        v = form.get(k)
-        v = float(v) if v not in (None, "") else float(dv)
-        if k in pct:
-            v = v / 100.0
-        elif k in ("months", "promo", "bs", "bd", "ss", "sd", "fs", "fd"):
-            v = int(round(v))
-        ov[k] = v
-    return ov
-
-
-def _to_engine(ov):
-    return dict(
-        months=ov["months"], annual_rate=ov["rate"], equity_pct=ov["equity"],
-        down_payment=ov["down"], promo=ov["promo"], track20_share=ov["track20"],
-        planning_permit_share=ov["permit_share"],
-        fee_accompaniment=ov["fee_acc"], fee_sale_law=ov["fee_sale"],
-        fee_rent=ov["fee_rent"], fee_owners=ov["fee_own"], fee_non_util=ov["fee_nu"],
-        basement=(ov["bs"], ov["bd"]), skeleton=(ov["ss"], ov["sd"]),
-        finishing=(ov["fs"], ov["fd"]),
+# ---------- מיפוי שורות "מאוחד" ----------
+def read_source(path):
+    from openpyxl import load_workbook
+    m = load_workbook(path, data_only=True)["מאוחד"]
+    def g(r): return m[f"G{r}"].value or 0.0
+    direct_constr = g(175)                       # סה"כ עלות בנייה ישירה
+    basement_cost = g(170)                       # שטח תת-קרקעי
+    src = dict(
+        pidyon=m["J151"].value,                  # שווי פדיון ללא מע"מ
+        demolition_dev=g(157) + g(159),          # הריסה ופינוי + פיתוח חצר
+        planning=g(182),                         # תכנון ויועצים
+        heitel=g(207),                           # היטל השבחה
+        purchase_tax=g(206),                     # מס רכישה
+        agrot=g(179) + g(180) + g(181),          # אגרות והיטלי פיתוח (עילי+תת+קיזוז)
+        elec_res=g(183),                         # חיבור חשמל מגורים
+        elec_com=g(184),                         # חיבור חשמל מסחרי
+        legal=g(187),                            # משפטיות
+        moving=g(196),                           # הובלות (העברה מפונים)
+        tenant_advisors=g(198) + g(199) + g(200) + g(201),  # עו"ד+מפקח+שמאי+קרן
+        rent=g(194),                             # שכ"ד דיור חלוף
+        marketing=g(185),                        # שיווק ופרסום
+        management=g(186) + g(188),              # תקורה+ניהול + פיקוח
+        contingency=g(189),                      # בצ"מ
+        basement=basement_cost,
+        skeleton=(direct_constr - basement_cost) * 0.6,
+        finishing=direct_constr - (direct_constr - basement_cost) * 0.6 - basement_cost,
+        total_cost=g(213),                       # סה"כ עלות הקמה (ביקורת)
+        # שווי דירות בעלים לערבות בעלים
+        owners_value_main=m["I139"].value * m["I88"].value,   # עיקרי בלבד (מחודש 2)
+        owners_value_full=m["I139"].value * m["I88"].value
+                           + m["I139"].value * ((m["J88"].value or 0) + (m["K88"].value or 0)) * 0.5,  # + מרפסות (חודש 1)
     )
+    return src
 
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return INDEX
+# ---------- פריסת עלות ----------
+def spread_at_permit(amt, n):      # חודש 0
+    v = [0.0]*n; v[0] = amt; return v
+
+def spread_month1(amt, n):         # חודש בנייה ראשון
+    v = [0.0]*n; v[1] = amt; return v
+
+def spread_linear(amt, n):         # לינארי על חודשי הבנייה
+    v = [0.0]*n
+    per = amt/(n-1)
+    for m in range(1, n): v[m] = per
+    return v
+
+def spread_partial_permit(amt, share, n):
+    v = spread_linear(amt*(1-share), n); v[0] = amt*share; return v
+
+def spread_start_end(amt, n):
+    v = [0.0]*n; v[1] += amt/2; v[n-1] += amt/2; return v
+
+def spread_window(amt, start, dur, n):
+    v = [0.0]*n
+    end = min(start+dur-1, n-1); span = end-start+1
+    per = amt/span
+    for m in range(start, end+1): v[m] = per
+    return v
+
+def spread_rent_prepaid(amt, n, months):
+    """תשלום שכ"ד שנתי מראש: כל 12 חודשים, מתוחם לסך השכ"ד."""
+    v = [0.0]*n
+    annual = amt/months*12
+    paid = 0.0; m = 1
+    while m < n and paid < amt - 1:
+        pay = min(annual, amt - paid)
+        v[m] += pay; paid += pay; m += 12
+    return v
 
 
-@app.post("/generate")
-async def generate(
-    file: UploadFile = File(...),
-    months: str = Form(None), rate: str = Form(None), equity: str = Form(None),
-    down: str = Form(None), promo: str = Form(None), track20: str = Form(None),
-    permit_share: str = Form(None), fee_acc: str = Form(None), fee_sale: str = Form(None),
-    fee_rent: str = Form(None), fee_own: str = Form(None), fee_nu: str = Form(None),
-    bs: str = Form(None), bd: str = Form(None), ss: str = Form(None), sd: str = Form(None),
-    fs: str = Form(None), fd: str = Form(None),
-):
-    form = dict(months=months, rate=rate, equity=equity, down=down, promo=promo,
-                track20=track20, permit_share=permit_share, fee_acc=fee_acc,
-                fee_sale=fee_sale, fee_rent=fee_rent, fee_own=fee_own, fee_nu=fee_nu,
-                bs=bs, bd=bd, ss=ss, sd=sd, fs=fs, fd=fd)
-    ov = _canonical(form)
-
-    tmp_in = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-    try:
-        tmp_in.write(await file.read()); tmp_in.close(); tmp_out.close()
-        R = G.generate(tmp_in.name, overrides=_to_engine(ov))
-        W.build(tmp_in.name, tmp_out.name, overrides=ov)
-        return FileResponse(
-            tmp_out.name,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename="cashflow.xlsx",
-            headers={"X-Financing-Pct": f"{R['financing_pct']:.4f}"},
-        )
-    except KeyError:
-        return JSONResponse(status_code=400,
-                            content={"detail": "הקובץ אינו כולל גיליון 'מאוחד' תקין"})
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse(status_code=400, content={"detail": f"שגיאה בעיבוד: {e}"})
-    finally:
-        try: os.unlink(tmp_in.name)
-        except Exception: pass
+def build_expense_lines(src, cfg):
+    n = cfg["months"]+1
+    lines = {
+        "תכנון ויועצים": spread_partial_permit(src["planning"], cfg["planning_permit_share"], n),
+        "היטל השבחה": spread_at_permit(src["heitel"], n),
+        "מס רכישה": spread_at_permit(src["purchase_tax"], n),
+        "אגרות והיטלי פיתוח": spread_at_permit(src["agrot"], n),
+        "חיבור חשמל מגורים": spread_month1(src["elec_res"], n),
+        "חיבור חשמל מסחרי": spread_month1(src["elec_com"], n),
+        "משפטיות": spread_linear(src["legal"], n),
+        "הובלות": spread_start_end(src["moving"], n),
+        "יועצי דיירים (עו\"ד/מפקח/שמאי/קרן)": spread_linear(src["tenant_advisors"], n),
+        "שכ\"ד דיור חלוף": spread_rent_prepaid(src["rent"], n, cfg["months"]),
+        "שיווק ופרסום": spread_linear(src["marketing"], n),
+        "ניהול תקורה ופיקוח": spread_linear(src["management"], n),
+        "בלת\"מ": spread_linear(src["contingency"], n),
+        "הריסה ופיתוח": spread_at_permit(src["demolition_dev"], n),
+        "מרתפים": spread_window(src["basement"], *cfg["basement"], n),
+        "שלד": spread_window(src["skeleton"], *cfg["skeleton"], n),
+        "גמר": spread_window(src["finishing"], *cfg["finishing"], n),
+    }
+    return lines
 
 
-def _field(k, label, unit=""):
-    return (f'<label>{label}{unit}<input name="{k}" type="number" step="any" '
-            f'value="{DEFAULTS[k]}"></label>')
+def build_revenue(pidyon, cfg):
+    """
+    מודל הפדיון של הלשכה — מדרגה אלכסונית עם בלון במסירה:
+      • מסלול 20% (חתימה): 20% בחודש 1, 80% בלון בחודש המסירה.
+      • מסלול רגיל (80%): מכירה לינארית באצוות חודשיות (חודשים 2..M).
+        כל אצווה משלמת מקדמה 20% בחודש המכירה, והיתרה לינארית עד המסירה.
+    """
+    months = cfg["months"]; n = months+1
+    down = cfg["down_payment"]
+    promo = cfg["promo"]
+    track20_share = cfg["track20_share"]
+
+    v = [0.0]*n
+    I4 = pidyon * track20_share           # מסלול 20%
+    I5 = pidyon * (1 - track20_share)     # מסלול רגיל
+
+    # מסלול 20%: מקדמה בחודש 1, בלון במסירה
+    v[promo] += I4 * down
+    v[months] += I4 * (1 - down)
+
+    # מסלול רגיל: אצוות חודשיות, חודשים (promo+1)..months
+    n_batches = months - promo
+    batch_value = I5 / n_batches
+    batch_down = batch_value * down
+    batch_balance = batch_value * (1 - down)
+    for k in range(promo + 1, months + 1):
+        v[k] += batch_down
+        rem_months = months - k
+        if rem_months > 0:
+            per = batch_balance / rem_months
+            for mm in range(k + 1, months + 1):
+                v[mm] += per
+        else:
+            v[k] += batch_balance
+    return v
 
 
-ASSUM_HTML = "".join([
-    "<div class='grp'><div class='gh'>כללי</div>",
-    _field("months", "חודשי בנייה"), _field("rate", "ריבית שנתית", " %"),
-    _field("equity", "הון עצמי", " %"), _field("promo", "תקופת מבצע"),
-    "</div><div class='grp'><div class='gh'>הכנסות</div>",
-    _field("down", "מקדמה", " %"), _field("track20", "מסלול 20%", " %"),
-    _field("permit_share", "תכנון בהיתר", " %"),
-    "</div><div class='grp'><div class='gh'>ערבויות ועמלות</div>",
-    _field("fee_acc", "ליווי", " %"), _field("fee_sale", "חוק מכר", " %"),
-    _field("fee_rent", "שכ\"ד", " %"), _field("fee_own", "בעלים", " %"),
-    _field("fee_nu", "אי-ניצול", " %"),
-    "</div><div class='grp'><div class='gh'>חלונות ביצוע (חודש התחלה / משך)</div>",
-    _field("bs", "מרתף — התחלה"), _field("bd", "מרתף — משך"),
-    _field("ss", "שלד — התחלה"), _field("sd", "שלד — משך"),
-    _field("fs", "גמר — התחלה"), _field("fd", "גמר — משך"),
-    "</div>",
-])
+def generate(path, overrides=None):
+    cfg = dict(CFG)
+    if overrides:
+        cfg.update({k: v for k, v in overrides.items() if v is not None})
+    n = cfg["months"]+1
+    src = read_source(path)
 
-INDEX = """<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>מחולל תזרים — תקן 21</title>
-<style>
- :root{--purple:#4F2D7F;--orange:#F57C00}
- *{box-sizing:border-box;font-family:'Heebo','Rubik',Arial,sans-serif}
- body{margin:0;background:#f5f3f8;color:#222;padding:28px}
- .card{background:#fff;border-radius:18px;box-shadow:0 10px 40px rgba(79,45,127,.15);
-       padding:34px;max-width:640px;margin:0 auto}
- h1{color:var(--purple);font-size:22px;margin:0 0 4px}
- p.sub{color:#777;margin:0 0 22px;font-size:14px}
- #drop{border:2.5px dashed #c9b8e0;border-radius:14px;padding:34px 20px;text-align:center;
-       cursor:pointer;transition:.2s;background:#faf8fd}
- #drop.hover{border-color:var(--orange);background:#fff5ec}
- #drop .big{font-size:16px;color:var(--purple);font-weight:700}
- #drop .small{font-size:13px;color:#999;margin-top:6px}
- details{margin-top:16px;border:1px solid #eee;border-radius:12px;padding:6px 14px;background:#fbfafc}
- summary{cursor:pointer;font-weight:700;color:var(--purple);padding:8px 0}
- .grp{margin:10px 0}
- .gh{font-size:12px;color:var(--orange);font-weight:700;margin:8px 0 6px}
- label{display:inline-flex;flex-direction:column;font-size:12px;color:#555;margin:0 8px 8px 0;width:120px}
- input[type=number]{margin-top:3px;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:14px;width:100%}
- .btn{margin-top:18px;width:100%;border:0;border-radius:10px;padding:14px;background:var(--purple);
-      color:#fff;font-size:15px;font-weight:700;cursor:pointer}
- .btn:disabled{opacity:.5;cursor:default}
- .result{margin-top:22px;display:none;border-radius:12px;padding:22px;background:#fff5ec;
-         border:1px solid #ffd9b0;text-align:center}
- .pct{font-size:46px;font-weight:800;color:var(--orange);line-height:1}
- .pct-lbl{font-size:13px;color:#a15a00;margin-top:4px}
- .dl{margin-top:16px;display:inline-block;background:var(--orange);color:#fff;text-decoration:none;
-     padding:11px 22px;border-radius:9px;font-weight:700}
- .err{color:#c0392b;margin-top:14px;font-size:14px;display:none}
- .spin{display:none;margin-top:14px;color:var(--purple);font-size:14px}
-</style></head><body>
-<div class="card">
- <h1>מחולל תזרים הכנסות והוצאות</h1>
- <p class="sub">התחדשות עירונית · תקן 21 · לשכת שמאות לנדאו</p>
- <div id="drop">
-   <div class="big">גררו לכאן קובץ תחשיב (xlsx.)</div>
-   <div class="small">או לחצו לבחירה — הקובץ חייב לכלול גיליון "מאוחד"</div>
-   <input id="file" type="file" accept=".xlsx" hidden>
- </div>
- <details>
-   <summary>הנחות עבודה (לחיצה לעריכה)</summary>
-   __ASSUM__
- </details>
- <button id="go" class="btn" disabled>הפקת תזרים</button>
- <div class="spin" id="spin">מעבד…</div>
- <div class="err" id="err"></div>
- <div class="result" id="result">
-   <div class="pct" id="pct">—</div><div class="pct-lbl">אחוז מימון</div>
-   <a class="dl" id="dl">הורדת קובץ התזרים</a>
- </div>
-</div>
-<script>
-const drop=document.getElementById('drop'),inp=document.getElementById('file'),
-      go=document.getElementById('go'),res=document.getElementById('result'),
-      pct=document.getElementById('pct'),dl=document.getElementById('dl'),
-      err=document.getElementById('err'),spin=document.getElementById('spin');
-let chosen=null;
-drop.onclick=()=>inp.click();
-['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('hover')}));
-['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('hover')}));
-drop.addEventListener('drop',ev=>{chosen=ev.dataTransfer.files[0];show()});
-inp.onchange=()=>{chosen=inp.files[0];show()};
-function show(){if(chosen){drop.querySelector('.big').textContent=chosen.name;go.disabled=false;res.style.display='none';err.style.display='none'}}
-go.onclick=async()=>{
- if(!chosen)return;
- go.disabled=true;spin.style.display='block';err.style.display='none';res.style.display='none';
- const fd=new FormData();fd.append('file',chosen);
- document.querySelectorAll('details input[name]').forEach(i=>fd.append(i.name,i.value));
- try{
-   const r=await fetch('/generate',{method:'POST',body:fd});
-   if(!r.ok){const j=await r.json();throw new Error(j.detail||'שגיאה');}
-   const p=r.headers.get('X-Financing-Pct');
-   const blob=await r.blob();
-   pct.textContent=(parseFloat(p)*100).toFixed(2)+'%';
-   const url=URL.createObjectURL(blob);
-   dl.href=url;dl.download='תחשיב_עם_תזרים.xlsx';
-   res.style.display='block';
- }catch(e){err.textContent=e.message;err.style.display='block';}
- finally{spin.style.display='none';go.disabled=false;}
-};
-</script></body></html>""".replace("__ASSUM__", ASSUM_HTML)
+    exp_lines = build_expense_lines(src, cfg)
+    base_expense = [sum(exp_lines[k][m] for k in exp_lines) for m in range(n)]
+    revenue = build_revenue(src["pidyon"], cfg)
+
+    total_expense_base = sum(base_expense)
+
+    # עמלות וערבויות
+    accompaniment = total_expense_base * cfg["fee_accompaniment"]           # חד-פעמי
+    sale_law = [revenue[m]*cfg["fee_sale_law"]/12 for m in range(n)]        # חודשי מול פדיון
+    rent_guar_month = cfg["fee_rent"]/12*(src["rent"]/cfg["months"]*12)
+    # ערבות בעלים: חודש 1 על מלוא השווי (כולל מרפסות), מחודש 2 על העיקרי בלבד
+    owners_guar = [0.0]*n
+    owners_guar[1] = cfg["fee_owners"]/12*src["owners_value_full"]
+    for m in range(2, n):
+        owners_guar[m] = cfg["fee_owners"]/12*src["owners_value_main"]
+    # אי-ניצול: על היתרה הבלתי-מנוצלת של המסגרת (כולל הוצאות חודש ההיתר)
+    non_util = [0.0]*n; spent = base_expense[0]
+    for m in range(1, n):
+        spent += base_expense[m]
+        non_util[m] = max(total_expense_base-spent, 0.0)*cfg["fee_non_util"]/12
+
+    guar_month = [0.0]*n
+    guar_month[1] += accompaniment
+    for m in range(1, n):
+        guar_month[m] += sale_law[m] + rent_guar_month + owners_guar[m] + non_util[m]
+
+    expense_incl = [base_expense[m] + guar_month[m] for m in range(n)]
+
+    equity_cap = total_expense_base * cfg["equity_pct"]   # 25% מסך ההוצאות (כמו E27)
+    fr = simulate_financing(revenue, expense_incl, equity_cap, cfg["annual_rate"])
+
+    fb = FinancingCostBreakdown(
+        interest=fr.total_interest,
+        accompaniment=accompaniment,
+        sale_law_guarantee=sum(sale_law),
+        rent_guarantee=rent_guar_month*cfg["months"],
+        owners_guarantee=sum(owners_guar),
+        non_utilization=sum(non_util),
+    )
+    financing_pct = fb.total / src["total_cost"]
+
+    return dict(src=src, cfg=cfg, exp_lines=exp_lines, base_expense=base_expense,
+                revenue=revenue, expense_incl=expense_incl, guar_month=guar_month,
+                fin=fr, breakdown=fb, financing_pct=financing_pct,
+                total_expense_base=total_expense_base)
+
+
+if __name__ == "__main__":
+    path = sys.argv[1] if len(sys.argv) > 1 else "new.xlsx"
+    R = generate(path)
+    fb = R["breakdown"]
+    print(f"פדיון (ללא מע\"מ):        {R['src']['pidyon']:>16,.0f}")
+    print(f"סך עלות הקמה:            {R['src']['total_cost']:>16,.0f}")
+    print(f"חודשי בנייה:             {R['cfg']['months']:>16}")
+    print("-"*44)
+    print(f"ריבית נצברת:             {fb.interest:>16,.0f}")
+    print(f"עמלת ליווי:              {fb.accompaniment:>16,.0f}")
+    print(f"ערבות חוק מכר:           {fb.sale_law_guarantee:>16,.0f}")
+    print(f"ערבות שכ\"ד:              {fb.rent_guarantee:>16,.0f}")
+    print(f"ערבות בעלים:             {fb.owners_guarantee:>16,.0f}")
+    print(f"עמלת אי-ניצול:           {fb.non_utilization:>16,.0f}")
+    print("-"*44)
+    print(f"סך מימון:                {fb.total:>16,.0f}")
+    print(f"אחוז מימון:              {R['financing_pct']:>15.2%}")
