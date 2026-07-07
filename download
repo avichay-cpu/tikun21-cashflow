@@ -1,0 +1,118 @@
+"""
+פריסת עלות והכנסה על ציר הזמן — Timeline Spreading
+==================================================
+ממיר סכומים כוללים לזרמים חודשיים, לפי כללי הפריסה של האקסל.
+
+מוסכמה: חודש 0 = חודש ההיתר/החתימה; חודשים 1..M = חודשי הבנייה
+(M = cashflow_months). אורך כל וקטור = M + 1.
+"""
+from __future__ import annotations
+from typing import List
+from .models import CostLine, SpreadRule, ProposedProgram, RevenueParams
+
+
+def spread_cost(line: CostLine, months: int) -> List[float]:
+    """פורס שורת עלות בודדת לוקטור חודשי באורך months+1 (כולל חודש היתר)."""
+    n = months + 1
+    v = [0.0] * n
+    amt = line.amount
+    if amt == 0:
+        return v
+
+    rule = line.rule
+    if rule == SpreadRule.AT_PERMIT:
+        v[0] = amt
+
+    elif rule == SpreadRule.LINEAR:
+        per = amt / months
+        for m in range(1, n):
+            v[m] = per
+
+    elif rule == SpreadRule.PARTIAL_PERMIT_LINEAR:
+        v[0] = amt * line.permit_share
+        rest = amt * (1 - line.permit_share)
+        per = rest / months
+        for m in range(1, n):
+            v[m] = per
+
+    elif rule == SpreadRule.START_END:
+        v[1] += amt / 2
+        v[n - 1] += amt / 2
+
+    elif rule == SpreadRule.WINDOW:
+        dur = line.duration or months
+        start = max(line.start_month, 1)
+        end = min(start + dur - 1, n - 1)
+        span = end - start + 1
+        per = amt / span
+        for m in range(start, end + 1):
+            v[m] = per
+
+    elif rule == SpreadRule.BASEMENT:
+        # duration = חודשים לקומה × מספר קומות; נפרס לינארית מחודש start
+        dur = line.duration or months
+        start = max(line.start_month, 1)
+        end = min(start + dur - 1, n - 1)
+        span = end - start + 1
+        per = amt / span
+        for m in range(start, end + 1):
+            v[m] = per
+
+    elif rule == SpreadRule.RENT_PREPAID:
+        # שכ"ד המשולם מראש — פריסה לינארית על חודשי הבנייה
+        per = amt / months
+        for m in range(1, n):
+            v[m] = per
+
+    return v
+
+
+def build_expense_stream(cost_lines: List[CostLine], months: int) -> List[float]:
+    """סכום הזרמים החודשיים של כל שורות העלות."""
+    n = months + 1
+    total = [0.0] * n
+    for line in cost_lines:
+        s = spread_cost(line, months)
+        for m in range(n):
+            total[m] += s[m]
+    return total
+
+
+def sellable_res_area(program: ProposedProgram, revenue: RevenueParams,
+                      units_for_sale: int) -> float:
+    """שטח מכירה למגורים (5.3)."""
+    if revenue.sellable_res_area_override is not None:
+        return revenue.sellable_res_area_override
+    per_unit = (program.new_unit_avg_main_area
+                + program.balcony_area_per_unit * revenue.factor_balcony
+                + program.storage_area_per_unit * revenue.factor_storage
+                + program.service_area_per_unit * revenue.factor_service)
+    return units_for_sale * per_unit
+
+
+def build_revenue_stream(total_revenue: float, months: int,
+                         promo_months: int, down_payment_pct: float) -> List[float]:
+    """
+    פריסת הכנסות: תקבול ראשון (מקדמה) במכירה, והיתרה לינארית עד סוף התקופה.
+    קצב מכירה לינארי — הדירות נמכרות בפריסה שווה על תקופת המכירות.
+
+    מחזיר וקטור באורך months+1 (חודש 0 = היתר, ללא הכנסה).
+    """
+    n = months + 1
+    v = [0.0] * n
+    sale_months = list(range(1, months + 1))
+    k = len(sale_months)
+    rev_per_sale_month = total_revenue / k  # פדיון "נמכר" בכל חודש מכירה
+
+    for s in sale_months:
+        down = rev_per_sale_month * down_payment_pct
+        v[s] += down
+        remaining = rev_per_sale_month * (1 - down_payment_pct)
+        tail_months = [m for m in range(s + 1, months + 1)]
+        if tail_months:
+            per = remaining / len(tail_months)
+            for m in tail_months:
+                v[m] += per
+        else:
+            v[s] += remaining  # נמכר בחודש האחרון — הכל נכנס מיד
+    return v
