@@ -50,6 +50,7 @@ def extract_compound(path, sheet):
     sections = []          # [{idx,name,lines:[(label,val)],subtotal}]
     cur = None
     pidyon = owners = 0.0
+    units = build_months = 0.0
     stated_total = None
 
     for r in range(1, min(ws.max_row, 320) + 1):
@@ -67,6 +68,11 @@ def extract_compound(path, sheet):
             pidyon = _num(ws[f"J{r}"].value)      # פדיון היזם ללא מע"מ
             owners = _num(ws[f"K{r}"].value)      # שווי דירות דיירים (לערבות בלבד)
             continue
+        if "דירות לשיווק" in lbl and not units:
+            units = _num(ws[f"C{r}"].value)       # מספר דירות לשיווק
+            continue
+        if "תקופה מוערכת לבני" in lbl and not build_months:
+            build_months = _num(ws[f"C{r}"].value)  # חודשי בנייה מהקובץ
         # סה"כ עלות הקמה (לפני מימון = הנמוך) — מסמן סוף פירוט העלויות
         if "עלות הקמת הפרוי" in lbl:
             v = _num(ws[f"G{r}"].value)
@@ -95,7 +101,7 @@ def extract_compound(path, sheet):
     computed = sum(a for _, a, _ in cost_lines)
 
     return dict(
-        sheet=sheet, pidyon=pidyon, owners=owners,
+        sheet=sheet, pidyon=pidyon, owners=owners, units=units, build_months=build_months,
         total_before_fin=total_before_fin, sec_sum=sec_sum,
         computed_cost=computed, cost_lines=cost_lines,
         reconciled=abs(computed - total_before_fin) < max(1000, total_before_fin * 0.005),

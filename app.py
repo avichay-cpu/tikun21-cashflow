@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
-import write_multi as WM
+import write_formulas_multi as WM
 
 app = FastAPI(title="מחולל תזרים — התחדשות עירונית")
 
