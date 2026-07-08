@@ -36,13 +36,17 @@ def finance_compound(ex, cfg):
     # הכנסות (עם/בלי מסלול 20%)
     revenue = build_revenue(ex["pidyon"], cfg)
 
-    # עמלות וערבויות
+    # עמלות וערבויות (בשיטת התזרים הידני)
     acc = total_expense_base * cfg["fee_accompaniment"]
-    sale = [revenue[m] * cfg["fee_sale_law"] / 12 for m in range(n)]
+    # ערבות חוק מכר — נצברת על ההכנסות המצטברות
+    sale = [0.0] * n; cum_rev = 0.0
+    for m in range(1, n):
+        cum_rev += revenue[m]
+        sale[m] = cum_rev * cfg["fee_sale_law"] / 12
     rent_total = sum(a for nm, a, r in ex["cost_lines"] if r == "rent")
-    rent_g = cfg["fee_rent"] / 12 * (rent_total / cfg["months"] * 12) if rent_total else 0.0
-    # ערבות בעלים על שווי דירות הדיירים (עמודה K)
-    own_full = cfg["fee_owners"] / 12 * ex["owners"]
+    rent_g = cfg["fee_rent"] / 12 * (rent_total * 0.25) if rent_total else 0.0
+    # ערבות בעלים על הפדיון (כמו R50 בתזרים הידני)
+    own_full = cfg["fee_owners"] / 12 * ex["pidyon"]
     non_util = [0.0] * n; spent = base_expense[0]
     for m in range(1, n):
         spent += base_expense[m]

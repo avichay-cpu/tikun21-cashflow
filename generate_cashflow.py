@@ -154,10 +154,23 @@ def build_revenue(pidyon, cfg):
     months = cfg["months"]; n = months+1
     down = cfg["down_payment"]
     promo = cfg["promo"]
-    # אופציית כיבוי מסלול 20%/80%: כשמכובה — כל הפדיון נמכר במסלול הרגיל
-    track20_share = cfg["track20_share"] if cfg.get("use_track20", True) else 0.0
-
     v = [0.0]*n
+
+    if not cfg.get("use_track20", True):
+        # מסלול יחיד (ללא 20/80): מכירה לינארית מחודש 1, מקדמה + יתרה לינארית
+        bv = pidyon / months
+        for k in range(1, months + 1):
+            v[k] += bv * down
+            rem = months - k
+            if rem > 0:
+                per = bv * (1 - down) / rem
+                for m in range(k + 1, months + 1):
+                    v[m] += per
+            else:
+                v[k] += bv * (1 - down)
+        return v
+
+    track20_share = cfg["track20_share"]
     I4 = pidyon * track20_share           # מסלול 20%
     I5 = pidyon * (1 - track20_share)     # מסלול רגיל
 
