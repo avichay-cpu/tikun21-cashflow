@@ -35,14 +35,28 @@ CFG = dict(
 )
 
 # ---------- מיפוי שורות "מאוחד" ----------
+def _num(x):
+    """המרה בטוחה למספר: טקסט-שנראה-כמספר → מספר, ריק/טקסט → 0."""
+    if x is None:
+        return 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = str(x).replace(",", "").replace("₪", "").replace("%", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
 def read_source(path):
     from openpyxl import load_workbook
     m = load_workbook(path, data_only=True)["מאוחד"]
-    def g(r): return m[f"G{r}"].value or 0.0
+    def g(r): return _num(m[f"G{r}"].value)
+    def cell(a): return _num(m[a].value)
     direct_constr = g(175)                       # סה"כ עלות בנייה ישירה
     basement_cost = g(170)                       # שטח תת-קרקעי
     src = dict(
-        pidyon=m["J151"].value,                  # שווי פדיון ללא מע"מ
+        pidyon=cell("J151"),                     # שווי פדיון ללא מע"מ
         demolition_dev=g(157) + g(159),          # הריסה ופינוי + פיתוח חצר
         planning=g(182),                         # תכנון ויועצים
         heitel=g(207),                           # היטל השבחה
@@ -62,9 +76,9 @@ def read_source(path):
         finishing=direct_constr - (direct_constr - basement_cost) * 0.6 - basement_cost,
         total_cost=g(213),                       # סה"כ עלות הקמה (ביקורת)
         # שווי דירות בעלים לערבות בעלים
-        owners_value_main=m["I139"].value * m["I88"].value,   # עיקרי בלבד (מחודש 2)
-        owners_value_full=m["I139"].value * m["I88"].value
-                           + m["I139"].value * ((m["J88"].value or 0) + (m["K88"].value or 0)) * 0.5,  # + מרפסות (חודש 1)
+        owners_value_main=cell("I139") * cell("I88"),   # עיקרי בלבד (מחודש 2)
+        owners_value_full=cell("I139") * cell("I88")
+                           + cell("I139") * (cell("J88") + cell("K88")) * 0.5,  # + מרפסות (חודש 1)
     )
     return src
 
@@ -140,15 +154,17 @@ def build_revenue(pidyon, cfg):
     months = cfg["months"]; n = months+1
     down = cfg["down_payment"]
     promo = cfg["promo"]
-    track20_share = cfg["track20_share"]
+    # אופציית כיבוי מסלול 20%/80%: כשמכובה — כל הפדיון נמכר במסלול הרגיל
+    track20_share = cfg["track20_share"] if cfg.get("use_track20", True) else 0.0
 
     v = [0.0]*n
     I4 = pidyon * track20_share           # מסלול 20%
     I5 = pidyon * (1 - track20_share)     # מסלול רגיל
 
     # מסלול 20%: מקדמה בחודש 1, בלון במסירה
-    v[promo] += I4 * down
-    v[months] += I4 * (1 - down)
+    if I4:
+        v[promo] += I4 * down
+        v[months] += I4 * (1 - down)
 
     # מסלול רגיל: אצוות חודשיות, חודשים (promo+1)..months
     n_batches = months - promo
@@ -213,6 +229,10 @@ def generate(path, overrides=None):
         owners_guarantee=sum(owners_guar),
         non_utilization=sum(non_util),
     )
+    if not src["total_cost"] or not src["pidyon"]:
+        raise ValueError(
+            "לא נמצאו נתוני מקור בגיליון 'מאוחד' (סך עלות הקמה / שווי פדיון). "
+            "ייתכן שמבנה הקובץ שונה מהתבנית — בדוק שהגיליון 'מאוחד' תקין.")
     financing_pct = fb.total / src["total_cost"]
 
     return dict(src=src, cfg=cfg, exp_lines=exp_lines, base_expense=base_expense,
