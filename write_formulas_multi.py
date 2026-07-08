@@ -36,16 +36,21 @@ def _income_sheet(wb, ex, cfg, idx):
     M = cfg["months"]
     _s(ws, 1, 2, f"תזרים הכנסות — מתחם {idx}", Font(name=FONT, bold=True, size=13, color="4F2D7F"))
     # פרמטרים (קלט)
+    use20 = 1 if cfg.get("use_track20", True) else 0
     _s(ws, 3, 2, "פדיון (ללא מע\"מ)", REG, al=RGT); _s(ws, 3, 3, round(ex["pidyon"]), BLUE, fmt=CUR, fill=INP)
     _s(ws, 4, 2, "חודשי תזרים", REG, al=RGT); _s(ws, 4, 3, M, BLUE, fill=INP)
     _s(ws, 5, 2, "תקבול ראשון (מקדמה)", REG, al=RGT); _s(ws, 5, 3, cfg["down_payment"], BLUE, fmt=PCT, fill=INP)
-    P_PID, P_M, P_DOWN = "$C$3", "$C$4", "$C$5"
-    _s(ws, 6, 2, "פדיון לחודש (בסיס)", REG, al=RGT); _s(ws, 6, 3, f"={P_PID}/{P_M}", REG, fmt=CUR)
-    BATCH = "$C$6"   # ערך אצווה חודשית = פדיון/חודשים
+    _s(ws, 6, 2, "מסלול 20/80 פעיל", REG, al=RGT); _s(ws, 6, 3, use20, BLUE, fill=INP)
+    _s(ws, 7, 2, "חלק מסלול 20%", REG, al=RGT); _s(ws, 7, 3, cfg["track20_share"], BLUE, fmt=PCT, fill=INP)
+    P_PID, P_M, P_DOWN, P_U20, P_SH = "$C$3", "$C$4", "$C$5", "$C$6", "$C$7"
+    _s(ws, 8, 2, "פדיון מסלול 20%", REG, al=RGT); _s(ws, 8, 3, f"={P_PID}*{P_U20}*{P_SH}", REG, fmt=CUR); I4 = "$C$8"
+    _s(ws, 9, 2, "פדיון מסלול רגיל", REG, al=RGT); _s(ws, 9, 3, f"={P_PID}-{I4}", REG, fmt=CUR); I5 = "$C$9"
+    _s(ws, 10, 2, "אצווה חודשית (רגיל)", REG, al=RGT); _s(ws, 10, 3, f"={I5}/{P_M}", REG, fmt=CUR)
+    BATCH = "$C$10"
 
     MC0 = 4
-    def mcol(m): return MC0 + m       # חודש 1 -> עמודה D
-    hr = 8; midx = 9
+    def mcol(m): return MC0 + m
+    hr = 12; midx = 13
     _s(ws, hr, 2, "אצווה \\ חודש", WHT, fill=HDR)
     _s(ws, midx, 2, "אינדקס", REG, al=RGT)
     for m in range(1, M + 1):
@@ -55,28 +60,33 @@ def _income_sheet(wb, ex, cfg, idx):
     _s(ws, hr, tot_col, "סה\"כ", WHT, fill=HDR)
 
     b0 = midx + 1
-    for k in range(1, M + 1):                       # אצווה שנמכרת בחודש k
-        rr = b0 + (k - 1)
+    # שורת מסלול 20%: מקדמה בחודש 1, בלון במסירה
+    t20 = b0
+    _s(ws, t20, 2, "מסלול 20% (חתימה+בלון)", REG, al=RGT)
+    for m in range(1, M + 1):
+        col = mcol(m)
+        f = f"=IF({CL(col)}${midx}=1,{I4}*{P_DOWN},IF({CL(col)}${midx}={P_M},{I4}*(1-{P_DOWN}),0))"
+        _s(ws, t20, col, f, REG, fmt=CUR)
+    _s(ws, t20, tot_col, f"=SUM({CL(mcol(1))}{t20}:{CL(mcol(M))}{t20})", REG, fmt=CUR)
+    # אצוות רגילות
+    reg0 = t20 + 1
+    for k in range(1, M + 1):
+        rr = reg0 + (k - 1)
         _s(ws, rr, 2, f"אצווה חודש {k}", REG, al=RGT)
         for m in range(1, M + 1):
-            col = mcol(m); mi = f"{CL(col)}${midx}"
-            if m < k:
-                f = 0
-            elif m == k:
-                f = f"={BATCH}*{P_DOWN}"            # מקדמה בחודש המכירה
-            else:
-                f = f"=IF({P_M}-{k}>0,{BATCH}*(1-{P_DOWN})/({P_M}-{k}),0)"
+            col = mcol(m)
+            if m < k: f = 0
+            elif m == k: f = f"={BATCH}*{P_DOWN}"
+            else: f = f"=IF({P_M}-{k}>0,{BATCH}*(1-{P_DOWN})/({P_M}-{k}),0)"
             _s(ws, rr, col, f, REG, fmt=CUR)
-        # אצווה אחרונה: היתרה נכנסת במלואה בחודש האחרון
-        if k == M:
-            _s(ws, rr, mcol(k), f"={BATCH}", REG, fmt=CUR)
+        if k == M: _s(ws, rr, mcol(k), f"={BATCH}", REG, fmt=CUR)
         _s(ws, rr, tot_col, f"=SUM({CL(mcol(1))}{rr}:{CL(mcol(M))}{rr})", REG, fmt=CUR)
-    last = b0 + M - 1
+    last = reg0 + M - 1
     tr = last + 1
     _s(ws, tr, 2, "הכנסות לחודש", BLD, fill=SUB)
     for m in range(1, M + 1):
         col = mcol(m)
-        _s(ws, tr, col, f"=SUM({CL(col)}{b0}:{CL(col)}{last})", BLD, fmt=CUR, fill=SUB)
+        _s(ws, tr, col, f"=SUM({CL(col)}{t20}:{CL(col)}{last})", BLD, fmt=CUR, fill=SUB)
     _s(ws, tr, tot_col, f"=SUM({CL(mcol(1))}{tr}:{CL(mcol(M))}{tr})", BLD, fmt=CUR, fill=SUB)
 
     ws.column_dimensions["B"].width = 18
@@ -120,6 +130,7 @@ def _expense_sheet(wb, ex, cfg, idx, inc_name, inc_row, inc_mc0):
     br = ar + len(assum) + 1
     _s(ws, br, 2, "פדיון (לערבות בעלים)", REG, al=RGT); _s(ws, br, 3, round(ex["pidyon"]), REG, fmt=CUR); P["pidyon"] = f"$C${br}"
     _s(ws, br+1, 2, "סה\"כ עלות (לפני מימון)", REG, al=RGT); _s(ws, br+1, 3, round(ex["total_before_fin"]), REG, fmt=CUR); P["cost"] = f"$C${br+1}"
+    _s(ws, br+2, 2, "שווי דירות דיירים", REG, al=RGT); _s(ws, br+2, 3, round(ex["owners"]), REG, fmt=CUR); P["owners"] = f"$C${br+2}"
 
     hr = br + 3; mir = hr + 1
     MC0 = 4
@@ -163,16 +174,16 @@ def _expense_sheet(wb, ex, cfg, idx, inc_name, inc_row, inc_mc0):
     _s(ws, r, 2, "עמלת ליווי", REG, al=RGT)
     for m in range(n): _s(ws, r, mcol(m), f"=IF({mi(m)}=1,{EXP_T}*{P['fee_acc']},0)", REG, fmt=CUR)
     _s(ws, r, tot_col, f"=SUM({CL(mcol(0))}{r}:{CL(mcol(M))}{r})", REG, fmt=CUR); acc_r = r; r += 1
-    _s(ws, r, 2, "ערבות חוק מכר", REG, al=RGT)   # נצבר על הכנסות מצטברות
+    _s(ws, r, 2, "ערבות חוק מכר", REG, al=RGT)   # על הכנסות החודש
     for m in range(n):
         if m == 0: _s(ws, r, mcol(m), 0, REG, fmt=CUR)
-        else: _s(ws, r, mcol(m), f"={P['fee_sale']}/12*SUM({CL(mcol(1))}{inc_r}:{CL(mcol(m))}{inc_r})", REG, fmt=CUR)
+        else: _s(ws, r, mcol(m), f"={CL(mcol(m))}{inc_r}*{P['fee_sale']}/12", REG, fmt=CUR)
     _s(ws, r, tot_col, f"=SUM({CL(mcol(0))}{r}:{CL(mcol(M))}{r})", REG, fmt=CUR); sale_r = r; r += 1
     _s(ws, r, 2, "ערבות שכ\"ד", REG, al=RGT)
-    for m in range(n): _s(ws, r, mcol(m), f"=IF({mi(m)}>=1,{P['fee_rent']}/12*{rent_total}*0.25,0)", REG, fmt=CUR)
+    for m in range(n): _s(ws, r, mcol(m), f"=IF({mi(m)}>=1,{P['fee_rent']}/12*({rent_total}/{P['months']}*12),0)", REG, fmt=CUR)
     _s(ws, r, tot_col, f"=SUM({CL(mcol(0))}{r}:{CL(mcol(M))}{r})", REG, fmt=CUR); rent_r = r; r += 1
-    _s(ws, r, 2, "ערבות בעלים", REG, al=RGT)     # על הפדיון
-    for m in range(n): _s(ws, r, mcol(m), f"=IF({mi(m)}>=1,{P['fee_own']}/12*{P['pidyon']},0)", REG, fmt=CUR)
+    _s(ws, r, 2, "ערבות בעלים", REG, al=RGT)     # על שווי דירות הדיירים
+    for m in range(n): _s(ws, r, mcol(m), f"=IF({mi(m)}>=1,{P['fee_own']}/12*{P['owners']},0)", REG, fmt=CUR)
     _s(ws, r, tot_col, f"=SUM({CL(mcol(0))}{r}:{CL(mcol(M))}{r})", REG, fmt=CUR); own_r = r; r += 1
     _s(ws, r, 2, "עמלת אי-ניצול", REG, al=RGT)
     for m in range(n):

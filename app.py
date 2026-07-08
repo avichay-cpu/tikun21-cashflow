@@ -12,9 +12,9 @@ import write_formulas_multi as WM
 
 app = FastAPI(title="מחולל תזרים — התחדשות עירונית")
 
-DEFAULTS = dict(months=42, rate=6.0, equity=25, down=15, promo=1, track20=20,
-                permit_share=50, fee_acc=0.35, fee_sale=0.8, fee_rent=1.3,
-                fee_own=0.8, fee_nu=0.35, bs=2, bd=9, ss=10, sd=12, fs=20, fd=23)
+DEFAULTS = dict(months=42, rate=5.5, equity=25, down=20, promo=1, track20=20,
+                permit_share=50, fee_acc=0.5, fee_sale=0.8, fee_rent=3.5,
+                fee_own=0.7, fee_nu=0.4, bs=2, bd=9, ss=10, sd=12, fs=20, fd=23)
 
 
 def _to_engine(form, use_track20):
@@ -51,7 +51,7 @@ async def generate(
     permit_share: str = Form(None), fee_acc: str = Form(None), fee_sale: str = Form(None),
     fee_rent: str = Form(None), fee_own: str = Form(None), fee_nu: str = Form(None),
     bs: str = Form(None), bd: str = Form(None), ss: str = Form(None), sd: str = Form(None),
-    fs: str = Form(None), fd: str = Form(None), use_track20: str = Form("off"),
+    fs: str = Form(None), fd: str = Form(None), use_track20: str = Form("on"),
 ):
     form = dict(months=months, rate=rate, equity=equity, down=down, promo=promo,
                 track20=track20, permit_share=permit_share, fee_acc=fee_acc,
@@ -94,7 +94,7 @@ ASSUM = "".join([
     _field("months", "חודשי בנייה"), _field("rate", "ריבית שנתית", " %"),
     _field("equity", "הון עצמי", " %"), _field("promo", "תקופת מבצע"),
     "</div><div class='grp'><div class='gh'>הכנסות</div>",
-    "<label class='chk'><input type='checkbox' name='use_track20'> מסלול 20%/80%</label>",
+    "<label class='chk'><input type='checkbox' name='use_track20' checked> מסלול 20%/80%</label>",
     _field("down", "מקדמה", " %"), _field("track20", "מסלול 20%", " %"),
     _field("permit_share", "תכנון בהיתר", " %"),
     "</div><div class='grp'><div class='gh'>ערבויות ועמלות</div>",

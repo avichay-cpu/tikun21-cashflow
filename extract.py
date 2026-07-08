@@ -97,15 +97,49 @@ def extract_compound(path, sheet):
     sec_sum = sum(s["subtotal"] or 0 for s in sections)
     total_before_fin = stated_total if stated_total else sec_sum
 
+    # שווי דירות הדיירים לערבות בעלים = מחיר למ"ר × שטח דירות (עיקרי + מרפסות×0.5)
+    owners_value = _owners_value(ws)
+
     cost_lines = _build_cost_lines(sections)
     computed = sum(a for _, a, _ in cost_lines)
 
     return dict(
-        sheet=sheet, pidyon=pidyon, owners=owners, units=units, build_months=build_months,
+        sheet=sheet, pidyon=pidyon, owners=owners_value or owners, units=units, build_months=build_months,
         total_before_fin=total_before_fin, sec_sum=sec_sum,
         computed_cost=computed, cost_lines=cost_lines,
         reconciled=abs(computed - total_before_fin) < max(1000, total_before_fin * 0.005),
     )
+
+
+def _owners_value(ws):
+    """שווי דירות הדיירים לערבות בעלים: מחיר למ\"ר × שטח (עיקרי + מרפסות×0.5)."""
+    price = 0.0
+    for r in range(1, min(ws.max_row, 300) + 1):
+        for c in range(1, min(ws.max_column, 16) + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, str) and "שווי" in v and "שיווק" in v and "יח" not in v:
+                # המחיר = הערך המספרי הראשון מימין לתווית
+                for cc in range(c + 1, min(ws.max_column, 16) + 1):
+                    nv = ws.cell(row=r, column=cc).value
+                    if isinstance(nv, (int, float)) and nv:
+                        price = float(nv); break
+                if price:
+                    break
+        if price:
+            break
+    if not price:
+        return 0.0
+    # שורת "סה\"כ" של תמהיל הדירות (מעל "סה\"כ בפרויקט")
+    proj_r = None
+    for r in range(1, min(ws.max_row, 300) + 1):
+        if "בפרויקט" in _label(ws, r):
+            proj_r = r; break
+    if not proj_r:
+        return 0.0
+    ar = proj_r - 1
+    main = _num(ws[f"I{ar}"].value)
+    balc = _num(ws[f"J{ar}"].value) + _num(ws[f"K{ar}"].value)
+    return price * main + price * balc * 0.5
 
 
 def _build_cost_lines(sections):
