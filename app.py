@@ -52,12 +52,16 @@ async def generate(
     fee_rent: str = Form(None), fee_own: str = Form(None), fee_nu: str = Form(None),
     bs: str = Form(None), bd: str = Form(None), ss: str = Form(None), sd: str = Form(None),
     fs: str = Form(None), fd: str = Form(None), use_track20: str = Form("on"),
+    owners_override: str = Form(None),
 ):
     form = dict(months=months, rate=rate, equity=equity, down=down, promo=promo,
                 track20=track20, permit_share=permit_share, fee_acc=fee_acc,
                 fee_sale=fee_sale, fee_rent=fee_rent, fee_own=fee_own, fee_nu=fee_nu,
                 bs=bs, bd=bd, ss=ss, sd=sd, fs=fs, fd=fd)
     ov = _to_engine(form, use_track20 in ("on", "true", "1", True))
+    if owners_override not in (None, ""):
+        try: ov["owners_override"] = float(str(owners_override).replace(",", ""))
+        except ValueError: pass
 
     tin = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     tout = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -97,6 +101,8 @@ ASSUM = "".join([
     "<label class='chk'><input type='checkbox' name='use_track20' checked> מסלול 20%/80%</label>",
     _field("down", "מקדמה", " %"), _field("track20", "מסלול 20%", " %"),
     _field("permit_share", "תכנון בהיתר", " %"),
+    "<label style='width:auto'>שווי דירות דיירים (עקיפה, ריק=אוטומטי)"
+    "<input name='owners_override' type='number' step='any' placeholder='אוטומטי' style='width:160px'></label>",
     "</div><div class='grp'><div class='gh'>ערבויות ועמלות</div>",
     _field("fee_acc", "ליווי", " %"), _field("fee_sale", "חוק מכר", " %"),
     _field("fee_rent", "שכ\"ד", " %"), _field("fee_own", "בעלים", " %"),
@@ -153,7 +159,7 @@ INDEX = """<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
  <div class="spin" id="spin">מעבד…</div>
  <div class="err" id="err"></div>
  <div class="result" id="result">
-   <table id="tbl"><thead><tr><th>מתחם</th><th>פדיון</th><th>עלות לפני מימון</th><th>מימון</th><th>אחוז מימון</th><th>בקרה</th></tr></thead><tbody id="tb"></tbody></table>
+   <table id="tbl"><thead><tr><th>מתחם</th><th>פדיון</th><th>שווי דירות</th><th>עלות לפני מימון</th><th>מימון</th><th>אחוז מימון</th><th>בקרה</th></tr></thead><tbody id="tb"></tbody></table>
    <div style="text-align:center"><a class="dl" id="dl">הורדת קובץ התזרים</a></div>
  </div>
 </div>
@@ -181,7 +187,7 @@ go.onclick=async()=>{
    if(!r.ok){const j=await r.json();throw new Error(j.detail||'שגיאה');}
    const results=JSON.parse(r.headers.get('X-Results'));
    const blob=await r.blob();
-   tb.innerHTML=results.map(x=>`<tr><td>${x.sheet}</td><td>${fmt(x.pidyon)}</td><td>${fmt(x.cost)}</td><td>${fmt(x.financing)}</td><td class="pct">${(x.pct*100).toFixed(2)}%</td><td class="${x.reconciled?'ok':'bad'}">${x.reconciled?'תקין ✓':'פער — בדוק'}</td></tr>`).join('');
+   tb.innerHTML=results.map(x=>`<tr><td>${x.sheet}</td><td>${fmt(x.pidyon)}</td><td>${fmt(x.owners)}</td><td>${fmt(x.cost)}</td><td>${fmt(x.financing)}</td><td class="pct">${(x.pct*100).toFixed(2)}%</td><td class="${x.reconciled?'ok':'bad'}">${x.reconciled?'תקין ✓':'פער — בדוק'}</td></tr>`).join('');
    dl.href=URL.createObjectURL(blob);dl.download='תחשיב_עם_תזרים.xlsx';
    res.style.display='block';
  }catch(e){err.textContent=e.message;err.style.display='block';}

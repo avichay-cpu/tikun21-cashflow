@@ -112,16 +112,16 @@ def extract_compound(path, sheet):
 
 
 def _owners_value(ws):
-    """שווי דירות הדיירים לערבות בעלים: מחיר למ\"ר × שטח (עיקרי + מרפסות×0.5)."""
+    """שווי דירות הדיירים = מחיר למ\"ר × שטח (עיקרי + מרפסות×0.5).
+    מחיר: שורת "שווי מ\"ר ממוצע לשיווק". שטח: שורת "סה\"כ" שאחרי "מיוחדות"."""
     price = 0.0
     for r in range(1, min(ws.max_row, 300) + 1):
         for c in range(1, min(ws.max_column, 16) + 1):
             v = ws.cell(row=r, column=c).value
             if isinstance(v, str) and "שווי" in v and "שיווק" in v and "יח" not in v:
-                # המחיר = הערך המספרי הראשון מימין לתווית
                 for cc in range(c + 1, min(ws.max_column, 16) + 1):
                     nv = ws.cell(row=r, column=cc).value
-                    if isinstance(nv, (int, float)) and nv:
+                    if isinstance(nv, (int, float)) and nv > 1000:
                         price = float(nv); break
                 if price:
                     break
@@ -129,16 +129,20 @@ def _owners_value(ws):
             break
     if not price:
         return 0.0
-    # שורת "סה\"כ" של תמהיל הדירות (מעל "סה\"כ בפרויקט")
-    proj_r = None
+    # שטח דירות: שורת "סה\"כ" שמיד אחרי שורת "מיוחדות"
+    special_r = None
     for r in range(1, min(ws.max_row, 300) + 1):
-        if "בפרויקט" in _label(ws, r):
-            proj_r = r; break
-    if not proj_r:
+        if "מיוחדות" in _label(ws, r):
+            special_r = r; break
+    area_r = None
+    if special_r:
+        for r in range(special_r + 1, special_r + 6):
+            if _label(ws, r).startswith("סה"):
+                area_r = r; break
+    if not area_r:
         return 0.0
-    ar = proj_r - 1
-    main = _num(ws[f"I{ar}"].value)
-    balc = _num(ws[f"J{ar}"].value) + _num(ws[f"K{ar}"].value)
+    main = _num(ws[f"I{area_r}"].value)
+    balc = _num(ws[f"J{area_r}"].value) + _num(ws[f"K{area_r}"].value)
     return price * main + price * balc * 0.5
 
 

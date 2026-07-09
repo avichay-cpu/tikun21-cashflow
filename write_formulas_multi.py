@@ -250,8 +250,11 @@ def build(path_in, path_out, overrides=None):
         _s(summary, 3, 2 + j, h, WHT, fill=HDR, al=CEN)
     from finance_multi import finance_compound
     results = []; row = 4
+    owners_ovr = cfg.get("owners_override")
     for i, sh in enumerate(X.find_compound_sheets(path_in), start=1):
         ex = X.extract_compound(path_in, sh)
+        if owners_ovr:
+            ex["owners"] = owners_ovr
         c2 = dict(cfg)
         if ex["build_months"]:
             c2["months"] = int(ex["build_months"])
