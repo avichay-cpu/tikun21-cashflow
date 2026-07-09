@@ -65,8 +65,16 @@ def extract_compound(path, sheet):
             continue
         # פדיון + דירות דיירים (השורה מתחילה ב"סה\"כ", לכן נבדק לפני דילוג הסיכומים)
         if "פדיון חזוי ליזם" in lbl and "ללא מע" in lbl:
-            pidyon = _num(ws[f"J{r}"].value)      # פדיון היזם ללא מע"מ
-            owners = _num(ws[f"K{r}"].value)      # שווי דירות דיירים (לערבות בלבד)
+            # זיהוי עמודת הפדיון לפי כותרת "פדיון ללא מע\"מ" (העמודה השמאלית מבין ה'ללא מע"מ')
+            pcol = None
+            for hr in range(max(1, r - 15), r):
+                cols = [c for c in range(7, 15)
+                        if isinstance(ws.cell(row=hr, column=c).value, str)
+                        and "ללא מע" in ws.cell(row=hr, column=c).value]
+                if cols:
+                    pcol = min(cols); break
+            pidyon = _num(ws.cell(row=r, column=pcol).value) if pcol else _num(ws[f"J{r}"].value)
+            owners = _num(ws[f"K{r}"].value)      # שווי דירות דיירים (גיבוי בלבד)
             continue
         if "דירות לשיווק" in lbl and not units:
             units = _num(ws[f"C{r}"].value)       # מספר דירות לשיווק
